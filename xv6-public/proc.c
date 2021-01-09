@@ -507,7 +507,7 @@ int kill(int pid)
 }
 /* 
 ================================================================================
- código executado no ^P e alterado para a task 1
+ código executado no ^P e alterado para a TASK 1
 ================================================================================
 */
 
@@ -539,7 +539,7 @@ void procdump(void)
     else
       state = "???";
 
-    //nome, PID e estado mostrado por todos os processos na tabela de processos
+    //impressão mais intuitiva do nome, PID e estado mostrado por cada processos na tabela de processos
     cprintf("Nome: %s, Processo: %d, Estado: %s\n", p->name, p->pid, state);
 
     if (p->state == SLEEPING)
@@ -550,26 +550,26 @@ void procdump(void)
     }
     int count = 0, j = 0;
 
-    cprintf("\n\nInfos adicionais: %d:\n", p->pid);
+    cprintf("\n\nInformacoes adicionais: %d:\n", p->pid);
     cprintf("Tabela de paginas:\n");
-    //V2P converte o endereço virtual para o endereço físico
+    //Conversão do endereço virtual para físico utilizando V2P
     cprintf("Localizacao da memoria do diretorio da pagina = %x\n", V2P(p->pgdir));
 
     i = 0;
-    // numero de elementos na page directory table = NPDENTRIES
+    // Permaneceremos em looping enquanto i for menor que o numero de elementos na page directory table (NPDENTRIES)
     while (i < NPDENTRIES)
     {
-      // verifica flags present -> (PTE_P) e user -> (PTE_U) se estão acionadas
+      // verifica se as flags present (PTE_P) e user (PTE_U) estão acionadas
       if ((p->pgdir[i] & PTE_P) && (p->pgdir[i] & PTE_U))
       {
-        //tabela de pagina virtual
-        pte_t *pageTabVir = P2V((pte_t *)PTE_ADDR(p->pgdir[i]));
+        //tabela de pagina virtual (pgTabVir)
+        pte_t *pgTabVir = P2V((pte_t *)PTE_ADDR(p->pgdir[i]));
         count = 0;
-        // por cada entrada da tabela de páginas (PTE)
+        // percorremos cada entrada da tabela de páginas (PTE)
         for (j = 0; j < NPTENTRIES; j++)
         {
-          // verifica quais pags da tabela de página estão sendo usadas
-          if ((pageTabVir[j] & PTE_P) && (pageTabVir[j] & PTE_U))
+          // verificamos quais paginas da tabela de página estão sendo usadas
+          if ((pgTabVir[j] & PTE_P) && (pgTabVir[j] & PTE_U))
           {
             count++;
           }
@@ -585,24 +585,24 @@ void procdump(void)
     }
     cprintf("\n");
     cprintf("Mapeamento de pagina:\n");
-    //percorrendo as entradas do page directory
+    //percorrendo as entradas do page directory (segue a mesma logica anterior)
     for (i = 0; i < NPDENTRIES; i++)
     {
       if ((p->pgdir[i] & PTE_P) && (p->pgdir[i] & PTE_U))
       {
-        pte_t *pageTabVir = P2V((pte_t *)PTE_ADDR(p->pgdir[i]));
+        pte_t *pgTabVir = P2V((pte_t *)PTE_ADDR(p->pgdir[i]));
         count = 0;
         for (j = 0; j < NPTENTRIES; j++)
         {
-          if ((pageTabVir[j] & PTE_P) && (pageTabVir[j] & PTE_U))
+          if ((pgTabVir[j] & PTE_P) && (pgTabVir[j] & PTE_U))
           {
             count++;
           }
         }
         if (count > 0)
         {
-          // Armazena os virtual page number e physical page numer a partir dos ultimo 12 bits dos endereços virtuais e físico
-          cprintf("--->   [Virtual] %p -> [Físico] %p\n", (PTE_ADDR(P2V(PTE_ADDR(p->pgdir[i])))) >> 12, ((int)PTE_ADDR(p->pgdir[i]) >> 12));
+          // Armazena o numero de paginas virtual e fisica a partir dos ultimo 12 bits dos endereços
+          cprintf("--->   [Virtual] %p -> [Fisico] %p\n", (PTE_ADDR(P2V(PTE_ADDR(p->pgdir[i])))) >> 12, ((int)PTE_ADDR(p->pgdir[i]) >> 12));
         }
       }
     }
