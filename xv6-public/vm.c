@@ -195,26 +195,54 @@ void inituvm(pde_t *pgdir, char *init, uint sz)
 
 // Load a program segment into pgdir.  addr must be page-aligned
 // and the pages from addr to addr+sz must already be mapped.
-int loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
+int
+loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz,
+        uint permission)
 {
-  uint i, pa, n;
-  pte_t *pte;
+    uint i, pa, n;
+    pte_t *pte;
 
-  if ((uint)addr % PGSIZE != 0)
-    panic("loaduvm: addr must be page aligned");
-  for (i = 0; i < sz; i += PGSIZE)
-  {
-    if ((pte = walkpgdir(pgdir, addr + i, 0)) == 0)
-      panic("loaduvm: address should exist");
-    pa = PTE_ADDR(*pte);
-    if (sz - i < PGSIZE)
-      n = sz - i;
-    else
-      n = PGSIZE;
-    if (readi(ip, P2V(pa), offset + i, n) != n)
-      return -1;
-  }
-  return 0;
+    if((uint) addr % PGSIZE != 0)
+        panic("loaduvm: addr must be page aligned");
+    for(i = 0; i < sz; i += PGSIZE){
+        if((pte = walkpgdir(pgdir, addr+i, 0)) == 0)
+            panic("loaduvm: address should exist");
+        pa = PTE_ADDR(*pte);
+        if(sz - i < PGSIZE)
+            n = sz - i;
+        else
+            n = PGSIZE;
+        if(readi(ip, P2V(pa), offset+i, n) != n)
+            return -1;
+    }
+
+    if ((uint)addr % PGSIZE != 0)
+        panic("loaduvm: addr must be page aligned");
+    for (i = 0; i < sz; i += PGSIZE)
+    {
+        if ((pte = walkpgdir(pgdir, addr + i, 0)) == 0)
+            panic("loaduvm: address should exist");
+        pa = PTE_ADDR(*pte);
+        if (sz - i < PGSIZE)
+            n = sz - i;
+        else
+            n = PGSIZE;
+        if (readi(ip, P2V(pa), offset + i, n) != n)
+            return -1;
+    }
+    /* See if a section is writable */
+    uint w_active = permission & PTE_W; 
+
+    cprintf("Permission flag before = %d\n", permission);
+    cprintf("PTE_W = %d\n", PTE_W);
+    cprintf("w_active = %d\n", w_active);
+
+    if (!w_active) {
+        /* If it is not active it must be activated */
+        *pte = *pte & ~PTE_W;
+        cprintf("Permission flag after = %d\n", *pte);
+    }
+    return 0;
 }
 
 // Allocate page tables and physical memory to grow process from oldsz to
