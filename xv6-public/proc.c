@@ -553,7 +553,7 @@ void procdump(void)
     cprintf("\n\nInformacoes adicionais: %d:\n", p->pid);
     cprintf("Tabela de paginas:\n");
     //Conversão do endereço virtual para físico utilizando V2P
-    cprintf("Localizacao da memoria do diretorio da pagina = %x\n", V2P(p->pgdir));
+    cprintf("Localizacao da memoria no diretorio da pagina = %x\n", V2P(p->pgdir));
 
     i = 0;
     // Permaneceremos em looping enquanto i for menor que o numero de elementos na page directory table (NPDENTRIES)
