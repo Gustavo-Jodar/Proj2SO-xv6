@@ -183,7 +183,7 @@ UPROGS=\
 	_zombie\
 	_teste\
 	_date\
-	_permissionexploit\
+	_teste_permissao\
 	_acesso_zero\
 
 fs.img: mkfs README $(UPROGS)
