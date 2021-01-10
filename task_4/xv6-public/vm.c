@@ -6,6 +6,7 @@
 #include "mmu.h"
 #include "proc.h"
 #include "elf.h"
+#include "spinlock.h"
 
 extern char data[]; // defined by kernel.ld
 pde_t *kpgdir;      // for use in scheduler()
@@ -195,7 +196,8 @@ void inituvm(pde_t *pgdir, char *init, uint sz)
 
 // Load a program segment into pgdir.  addr must be page-aligned
 // and the pages from addr to addr+sz must already be mapped.
-int loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
+int loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz,
+            uint permission)
 {
   uint i, pa, n;
   pte_t *pte;
@@ -213,6 +215,34 @@ int loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
       n = PGSIZE;
     if (readi(ip, P2V(pa), offset + i, n) != n)
       return -1;
+  }
+
+  if ((uint)addr % PGSIZE != 0)
+    panic("loaduvm: addr must be page aligned");
+  for (i = 0; i < sz; i += PGSIZE)
+  {
+    if ((pte = walkpgdir(pgdir, addr + i, 0)) == 0)
+      panic("loaduvm: address should exist");
+    pa = PTE_ADDR(*pte);
+    if (sz - i < PGSIZE)
+      n = sz - i;
+    else
+      n = PGSIZE;
+    if (readi(ip, P2V(pa), offset + i, n) != n)
+      return -1;
+  }
+  /* See if a section is writable */
+  uint w_active = permission & PTE_W;
+
+  cprintf("Permission flag before = %d\n", permission);
+  cprintf("PTE_W = %d\n", PTE_W);
+  cprintf("w_active = %d\n", w_active);
+
+  if (!w_active)
+  {
+    /* If it is not active it must be activated */
+    *pte = *pte & ~PTE_W;
+    cprintf("Permission flag after = %d\n", *pte);
   }
   return 0;
 }
@@ -394,6 +424,225 @@ int copyout(pde_t *pgdir, uint va, void *p, uint len)
     va = va0 + PGSIZE;
   }
   return 0;
+}
+
+#define MAXMEMENDERECAVEL PHYSTOP >> 12
+static int tabela_compartilhada[MAXMEMENDERECAVEL]; // vetor de contadores para shared table
+struct spinlock mutex;                              // Bloqueia a shared table para que nao haja problema no compartilhamento de memoria
+
+// inicia a shared table com 0
+void inicia_sharedtable(void)
+{
+  initlock(&mutex, "sharedtable");
+  acquire(&mutex);
+  int i;
+  for (i = 0; i < MAXMEMENDERECAVEL; i++)
+  {
+    tabela_compartilhada[i] = 0;
+  }
+  release(&mutex);
+}
+
+int contaEnderecos(uint addr)
+{
+  return tabela_compartilhada[((addr >> 12) & 0xFFFFF)];
+}
+
+void incrContaEnderecos(uint addr)
+{
+  tabela_compartilhada[((addr >> 12) & 0xFFFFF)]++;
+}
+
+void decrContaEnderecos(uint addr)
+{
+  tabela_compartilhada[((addr >> 12) & 0xFFFFF)]--;
+}
+
+//função para compartilhar a pagina entre processos pai e filho
+pde_t *compartilha_pagina(pde_t *pgdir, uint sz)
+{
+  pde_t *d;
+  pte_t *pte;
+  uint pa, i, flags;
+  struct proc *processo_atual = myproc();
+
+  if ((d = setupkvm()) == 0)
+    return 0;
+
+  // garante que nao haja concorrencia de alteração na pagina
+  acquire(&mutex);
+
+  for (i = PGSIZE; i < sz; i += PGSIZE)
+  {
+    if ((pte = walkpgdir(pgdir, (void *)i, 0)) == 0)
+      panic("compartilha_pagina: pte deve existir");
+    if (!(*pte & PTE_P))
+      panic("compartilha_pagina: pagina nao presente");
+
+    //seta 1 no compartilhado e 0 no write
+    *pte |= PTE_COMPARTILHADO;
+    *pte &= ~PTE_W;
+
+    pa = PTE_ADDR(*pte);
+    flags = PTE_FLAGS(*pte);
+    if (mappages(d, (void *)i, PGSIZE, pa, flags) < 0)
+      goto bad;
+    // se estiver no processo pai (retornado diferente de 0) incrementa uma vez
+    if (contaEnderecos(pa) != 0)
+    {
+      incrContaEnderecos(pa);
+    }
+    // se for igual a zero incrementa-se duas vezes pq tem um filho
+    else
+    {
+      incrContaEnderecos(pa);
+      incrContaEnderecos(pa);
+    }
+  }
+  release(&mutex);
+  lcr3(V2P(processo_atual->pgdir));
+  return d;
+
+bad:
+  freevm(d);
+  return 0;
+}
+
+//quatro funcoes baseadas nas ja implementadas
+// deallocvm e free_vm
+
+//funcao que desaloca memoria virtual fazendo alterações necessarias na shared_table
+int desaloca_mv_cow(pde_t *pgdir, uint oldsz, uint newsz)
+{
+  pte_t *pte;
+  uint a, pa;
+
+  if (newsz >= oldsz)
+    return oldsz;
+
+  a = PGROUNDUP(newsz);
+
+  acquire(&mutex);
+
+  for (; a < oldsz; a += PGSIZE)
+  {
+    pte = walkpgdir(pgdir, (char *)a, 0);
+    if (!pte)
+      a += (NPTENTRIES - 1) * PGSIZE;
+    else if ((*pte & PTE_P) != 0)
+    {
+      pa = PTE_ADDR(*pte);
+      if (pa == 0)
+        panic("kfree");
+
+      // memoria sendo compartilhada -> decrementa
+      if (contaEnderecos(pa) > 1)
+      {
+        decrContaEnderecos(pa);
+      }
+      // Senao -> libera
+      else
+      {
+        char *v = P2V(pa);
+        kfree(v);
+        decrContaEnderecos(pa);
+      }
+      *pte = 0;
+    }
+  }
+  release(&mutex);
+  return newsz;
+}
+
+// libera a memoria virtual de um processo que usou o compartilha_cow
+void libera_mv_cow(pde_t *pgdir)
+{
+  uint i;
+
+  if (pgdir == 0)
+    panic("libera_mv_cow: sem pgdir");
+
+  desaloca_mv_cow(pgdir, KERNBASE, 0);
+
+  for (i = 0; i < NPDENTRIES; i++)
+  {
+    if (pgdir[i] & PTE_P)
+    {
+      char *v = P2V(PTE_ADDR(pgdir[i]));
+      kfree(v);
+    }
+  }
+  kfree((char *)pgdir);
+}
+
+//proximas duas são utilizadas no caso de falta de pagina
+int copia_mv_cow(uint addr, struct proc *curproc)
+{
+  uint pa;
+  pte_t *pte;
+  char *mem;
+  //struct proc *curproc = myproc();
+
+  pte = walkpgdir(curproc->pgdir, (void *)addr, 0);
+  pa = PTE_ADDR(*pte);
+
+  acquire(&mutex);
+  // Se pagina esta sendo compartilhada
+  if (contaEnderecos(pa) > 1)
+  {
+    if ((mem = kalloc()) == 0) // aloca uma nova página de memoria
+      goto bad;
+    memmove(mem, (char *)P2V(pa), PGSIZE);
+    *pte &= 0xFFF;
+    *pte &= ~PTE_COMPARTILHADO; // flag share = 0
+    *pte |= V2P(mem) | PTE_W;   // permite a escrita
+    decrContaEnderecos(pa);
+  }
+  //Senao
+  else
+  {
+    *pte |= PTE_W;
+    *pte &= ~PTE_COMPARTILHADO;
+  }
+
+  release(&mutex);
+
+  lcr3(V2P(curproc->pgdir));
+
+  return 1;
+
+bad:
+  return 0;
+}
+
+void trap_falta_de_pagina(struct proc *curproc)
+{
+  uint addr = rcr2(); // Recebe o valor da página que deu pagefault
+  //struct proc *curproc = myproc();
+
+  if (addr == 0)
+  {
+    cprintf("Falha de segmentação - Null Pointer Dereference\n");
+    kill(curproc->pid);
+  }
+  // Se o processo possui paginas compartilhadas, copia memoria
+  else
+  {
+    pte_t *pte = walkpgdir(curproc->pgdir, (void *)addr, 0);
+
+    if (PTE_FLAGS(*pte) & PTE_COMPARTILHADO)
+    {
+      copia_mv_cow(addr, curproc);
+      cprintf("Falta de pagina: cow\n");
+    }
+    else
+    {
+      copia_mv_cow(addr, curproc);
+      cprintf("Falta de pagina: cow \n");
+      cprintf("(Processo pai e filho ativo) -> PID = 0\n");
+      kill(curproc->pid);
+    }
+  }
 }
 
 //PAGEBREAK!

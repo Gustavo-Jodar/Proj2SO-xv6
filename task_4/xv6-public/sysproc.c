@@ -92,3 +92,8 @@ int sys_date(struct rtcdate *r)
   cmostime(r);
   return 1;
 }
+
+int sys_cow(void)
+{
+  return cow();
+}

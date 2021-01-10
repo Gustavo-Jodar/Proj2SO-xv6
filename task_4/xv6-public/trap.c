@@ -44,6 +44,15 @@ void trap(struct trapframe *tf)
     return;
   }
 
+  //chamada da funcao trap_falta de pagina sempre que ocorrer um page fault
+  if (tf->trapno == T_PGFLT)
+  {
+    myproc()->tf = tf;
+    struct proc *curproc = myproc();
+    trap_falta_de_pagina(curproc);
+    return;
+  }
+
   switch (tf->trapno)
   {
   case T_IRQ0 + IRQ_TIMER:

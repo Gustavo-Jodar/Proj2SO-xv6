@@ -299,6 +299,20 @@ int wait(void)
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
+
+        //cow
+        // se ele nao for compartilhado, pode desalocar a pagina
+        if (p->compartilhado == 0)
+        {
+          freevm(p->pgdir);
+        }
+        // caso seja, libera apenas as paginas que nao estao sendo compartilhadas com a func _cow
+        else
+        {
+          libera_mv_cow(p->pgdir);
+          p->compartilhado = 0;
+        }
+
         freevm(p->pgdir);
         p->pid = 0;
         p->parent = 0;
@@ -609,4 +623,64 @@ void procdump(void)
 
     cprintf("\n\n");
   }
+}
+
+/*
+Função para criar um novo processo,
+baseada na chamada fork, alterando:
+
+ao invés de copiar a memória com o copyuvm,
+utiliza a função compartilha_pagina() e usa as flags compartilhado
+do processo pai e filho
+*/
+int cow(void)
+{
+  int pid, i;
+  struct proc *processo_atual = myproc();
+  struct proc *np;
+
+  //alocando o processo
+  if ((np = allocproc()) == 0)
+  {
+    //alocação falhou
+    return -1;
+  }
+
+  //usando a compartilha_pagina()
+  if ((np->pgdir = compartilha_pagina(processo_atual->pgdir, processo_atual->sz)) == 0)
+  {
+    //se falhou o compartilhamento de memoria
+    kfree(np->kstack);
+    np->kstack = 0;
+    np->state = UNUSED;
+    return -1;
+  }
+
+  np->sz = processo_atual->sz;
+  np->parent = processo_atual;
+  *np->tf = *processo_atual->tf;
+
+  // altera o %eax para o fork continuar retornando 0 no processo filho
+  np->tf->eax = 0;
+
+  //liga a flags que mostra o compartilhamento da memoria
+  np->compartilhado = 1;
+  processo_atual->compartilhado = 1;
+
+  for (i = 0; i < NOFILE; i++)
+  {
+    if (processo_atual->ofile[i])
+      np->ofile[i] = filedup(processo_atual->ofile[i]);
+  }
+  np->cwd = idup(processo_atual->cwd);
+
+  safestrcpy(np->name, processo_atual->name, sizeof(processo_atual->name));
+  pid = np->pid;
+
+  //adquire um mutex para alterar o estado do processo
+  acquire(&ptable.lock);
+  np->state = RUNNABLE;
+  release(&ptable.lock);
+
+  return pid;
 }

@@ -100,8 +100,10 @@ extern int sys_wait(void);
 extern int sys_write(void);
 extern int sys_uptime(void);
 extern int sys_date(void);
+extern int sys_cow(void);
 
 static int (*syscalls[])(void) = {
+    [SYS_cow] sys_cow,
     [SYS_fork] sys_fork,
     [SYS_exit] sys_exit,
     [SYS_wait] sys_wait,
